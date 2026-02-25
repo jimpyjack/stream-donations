@@ -101,7 +101,20 @@ export default function OverlayPage() {
       setGoal(goalData);
       setAudio(audioData);
 
-      // Check for new soundbite triggers
+      // On initial load, just register all existing IDs without alerting or playing
+      if (initialLoadRef.current) {
+        initialLoadRef.current = false;
+        for (const d of pollData.donations || []) {
+          seenIdsRef.current.add(d.id);
+        }
+        // Also mark any existing soundbite trigger as seen without playing
+        if (soundbitesData.pendingTrigger) {
+          seenSoundbiteTriggerIds.current.add(soundbitesData.pendingTrigger.id);
+        }
+        return;
+      }
+
+      // Check for new soundbite triggers (only after initial load)
       if (
         soundbitesData.pendingTrigger &&
         !seenSoundbiteTriggerIds.current.has(soundbitesData.pendingTrigger.id)
@@ -117,15 +130,6 @@ export default function OverlayPage() {
             // silently fail if audio playback blocked
           });
         }
-      }
-
-      // On initial load, just register all existing IDs without alerting
-      if (initialLoadRef.current) {
-        initialLoadRef.current = false;
-        for (const d of pollData.donations || []) {
-          seenIdsRef.current.add(d.id);
-        }
-        return;
       }
 
       // Show alerts for new donations
