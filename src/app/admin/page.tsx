@@ -96,7 +96,13 @@ const FONTS = ["Inter", "Roboto Mono", "Press Start 2P", "Georgia", "Courier New
 const ALERT_STYLES: Theme["alertStyle"][] = ["slide-up", "slide-right", "fade-in", "bounce"];
 const BAR_STYLES: Theme["barStyle"][] = ["rounded", "flat", "gradient"];
 
-type AdminTab = "goal" | "donations" | "theme" | "audio" | "movie" | "soundbites";
+type AdminTab = "goal" | "donations" | "theme" | "audio" | "movie" | "soundbites" | "roulette";
+
+interface RouletteData {
+  active: boolean;
+  redVotes: number;
+  blackVotes: number;
+}
 
 export default function AdminDashboard() {
   const [donations, setDonations] = useState<Donation[]>([]);
@@ -125,6 +131,7 @@ export default function AdminDashboard() {
   const [availableSoundbiteFiles, setAvailableSoundbiteFiles] = useState<string[]>([]);
   const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading" | "success" | "error">("idle");
   const [uploadMessage, setUploadMessage] = useState<string>("");
+  const [roulette, setRoulette] = useState<RouletteData>({ active: false, redVotes: 0, blackVotes: 0 });
 
   const fetchAll = useCallback(async () => {
     try {
@@ -237,6 +244,34 @@ export default function AdminDashboard() {
       fetchSoundbites();
     }
   }, [activeTab, fetchSoundbites]);
+
+  const fetchRoulette = useCallback(async () => {
+    try {
+      const res = await fetch("/api/roulette");
+      const data = await res.json();
+      setRoulette({ active: data.active, redVotes: data.redVotes, blackVotes: data.blackVotes });
+    } catch {
+      // retry next cycle
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== "roulette") return;
+    fetchRoulette();
+    const interval = setInterval(fetchRoulette, 5000);
+    return () => clearInterval(interval);
+  }, [activeTab, fetchRoulette]);
+
+  const rouletteAction = async (action: "open" | "close" | "reset") => {
+    if (action === "reset" && !confirm("Reset all votes? This can't be undone.")) return;
+    const res = await fetch("/api/roulette", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+    const data = await res.json();
+    setRoulette({ active: data.active, redVotes: data.redVotes, blackVotes: data.blackVotes });
+  };
 
   const saveGoal = async () => {
     const newGoal: Goal = {
@@ -560,6 +595,7 @@ export default function AdminDashboard() {
               ["audio", "Audio"],
               ["soundbites", "Soundbites"],
               ["movie", "Movie Counter"],
+              ["roulette", "Roulette"],
             ] as const
           ).map(([key, label]) => (
             <button
@@ -1461,6 +1497,149 @@ export default function AdminDashboard() {
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          </div>
+        )}
+        {/* Roulette tab */}
+        {activeTab === "roulette" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* Status card */}
+            <div style={cardStyle}>
+              <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 20 }}>Roulette Voting</h2>
+
+              {/* Live counts */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+                <div
+                  style={{
+                    background: "#1f0a0a",
+                    borderRadius: 14,
+                    padding: "16px",
+                    border: "1px solid #dc262633",
+                    textAlign: "center",
+                  }}
+                >
+                  <div style={{ fontSize: 12, opacity: 0.5, marginBottom: 4 }}>🔴 Red</div>
+                  <div style={{ fontSize: 36, fontWeight: 900, color: "#dc2626" }}>
+                    {roulette.redVotes}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    background: "#111",
+                    borderRadius: 14,
+                    padding: "16px",
+                    border: "1px solid #444",
+                    textAlign: "center",
+                  }}
+                >
+                  <div style={{ fontSize: 12, opacity: 0.5, marginBottom: 4 }}>⚫ Black</div>
+                  <div style={{ fontSize: 36, fontWeight: 900, color: "#aaa" }}>
+                    {roulette.blackVotes}
+                  </div>
+                </div>
+              </div>
+
+              {/* Status indicator */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginBottom: 20,
+                  padding: "10px 14px",
+                  borderRadius: 10,
+                  background: roulette.active ? "#002211" : "#1a1a1a",
+                  border: `1px solid ${roulette.active ? "#00ff8833" : "#333"}`,
+                }}
+              >
+                <div
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: "50%",
+                    background: roulette.active ? "#00ff88" : "#555",
+                  }}
+                />
+                <span style={{ fontSize: 14, fontWeight: 600 }}>
+                  {roulette.active ? "Voting is OPEN" : "Voting is CLOSED"}
+                </span>
+              </div>
+
+              {/* Controls */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <button
+                  onClick={() => rouletteAction("open")}
+                  disabled={roulette.active}
+                  style={{
+                    ...buttonStyle,
+                    background: roulette.active ? "#1a1a1a" : "#166534",
+                    color: roulette.active ? "#555" : "#fff",
+                    width: "100%",
+                    cursor: roulette.active ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Open Voting
+                </button>
+                <button
+                  onClick={() => rouletteAction("close")}
+                  disabled={!roulette.active}
+                  style={{
+                    ...buttonStyle,
+                    background: !roulette.active ? "#1a1a1a" : "#713f12",
+                    color: !roulette.active ? "#555" : "#fff",
+                    width: "100%",
+                    cursor: !roulette.active ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Close Voting
+                </button>
+                <button
+                  onClick={() => rouletteAction("reset")}
+                  style={{
+                    ...buttonStyle,
+                    background: "#331111",
+                    color: "#ef4444",
+                    width: "100%",
+                  }}
+                >
+                  Reset (clears all votes)
+                </button>
+              </div>
+            </div>
+
+            {/* Links */}
+            <div style={cardStyle}>
+              <h2 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12, opacity: 0.7 }}>
+                Links
+              </h2>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 13, opacity: 0.5 }}>Share with chat:</div>
+                <div
+                  style={{
+                    fontFamily: "monospace",
+                    fontSize: 14,
+                    padding: "10px 14px",
+                    background: "#1a1a1a",
+                    borderRadius: 10,
+                    color: "#00ff88",
+                  }}
+                >
+                  donate.jackfahey.org/vote
+                </div>
+                <div style={{ fontSize: 13, opacity: 0.5, marginTop: 4 }}>OBS Browser Source:</div>
+                <div
+                  style={{
+                    fontFamily: "monospace",
+                    fontSize: 14,
+                    padding: "10px 14px",
+                    background: "#1a1a1a",
+                    borderRadius: 10,
+                    color: "#00ff88",
+                  }}
+                >
+                  donate.jackfahey.org/roulette-overlay
+                </div>
               </div>
             </div>
           </div>

@@ -4,7 +4,7 @@ import { getDonations, clearDonations } from "@/lib/store";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const donations = getDonations();
+  const donations = await getDonations();
   return NextResponse.json({
     donations,
     total: donations.reduce((sum, d) => sum + d.amount, 0),
@@ -12,6 +12,6 @@ export async function GET() {
 }
 
 export async function DELETE() {
-  clearDonations();
+  await clearDonations();
   return NextResponse.json({ success: true });
 }

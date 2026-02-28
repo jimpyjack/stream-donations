@@ -6,7 +6,7 @@ import { addDonation, getDonations, getDonationIds } from "@/lib/store";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const existingIds = getDonationIds();
+  const existingIds = await getDonationIds();
   const newDonations: string[] = [];
 
   // Search both Venmo and Zelle in parallel
@@ -21,7 +21,7 @@ export async function GET() {
     const message = await getMessage(result.id);
     if (!message) continue;
     const donation = parseVenmoEmail(result, message);
-    if (donation && addDonation(donation)) {
+    if (donation && (await addDonation(donation))) {
       newDonations.push(donation.id);
     }
   }
@@ -32,12 +32,12 @@ export async function GET() {
     const message = await getMessage(result.id);
     if (!message) continue;
     const donation = parseZelleEmail(result, message);
-    if (donation && addDonation(donation)) {
+    if (donation && (await addDonation(donation))) {
       newDonations.push(donation.id);
     }
   }
 
-  const allDonations = getDonations();
+  const allDonations = await getDonations();
   return NextResponse.json({
     donations: allDonations,
     newIds: newDonations,

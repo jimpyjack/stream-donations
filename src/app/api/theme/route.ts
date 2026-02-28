@@ -4,7 +4,7 @@ import { getTheme, setTheme, type Theme } from "@/lib/store";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return NextResponse.json(getTheme());
+  return NextResponse.json(await getTheme());
 }
 
 export async function PUT(request: Request) {
@@ -19,6 +19,6 @@ export async function PUT(request: Request) {
     alertStyle: body.alertStyle || "slide-up",
     barStyle: body.barStyle || "rounded",
   };
-  setTheme(theme);
+  await setTheme(theme);
   return NextResponse.json(theme);
 }

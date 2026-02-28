@@ -13,7 +13,7 @@ export async function POST(request: Request) {
       );
     }
 
-    triggerSoundbite(filename, volume ?? 1.0);
+    await triggerSoundbite(filename, volume ?? 1.0);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Error triggering soundbite:", error);

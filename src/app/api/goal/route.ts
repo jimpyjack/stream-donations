@@ -4,7 +4,7 @@ import { getGoal, setGoal } from "@/lib/store";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return NextResponse.json(getGoal());
+  return NextResponse.json(await getGoal());
 }
 
 export async function PUT(request: Request) {
@@ -14,6 +14,6 @@ export async function PUT(request: Request) {
     target: Number(body.target) || 0,
     active: Boolean(body.active),
   };
-  setGoal(goal);
+  await setGoal(goal);
   return NextResponse.json(goal);
 }

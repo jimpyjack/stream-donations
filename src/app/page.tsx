@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
 interface Donation {
   id: string;
@@ -17,12 +17,83 @@ interface Goal {
   active: boolean;
 }
 
+interface RouletteData {
+  active: boolean;
+  redVotes: number;
+  blackVotes: number;
+  sessionId: string;
+}
+
 type Tab = "recent" | "top";
+type VoteState = "hidden" | "ready" | "voted" | "cooldown-expired";
+
+const COOLDOWN_MS = 10 * 60 * 1000;
+
+function generateVoterId(): string {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+function formatCountdown(ms: number): string {
+  if (ms <= 0) return "0:00";
+  const totalSeconds = Math.ceil(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
 
 export default function DonatePage() {
   const [donations, setDonations] = useState<Donation[]>([]);
   const [goal, setGoal] = useState<Goal>({ label: "", target: 0, active: false });
   const [tab, setTab] = useState<Tab>("recent");
+
+  // Roulette state
+  const [roulette, setRoulette] = useState<RouletteData>({ active: false, redVotes: 0, blackVotes: 0, sessionId: "" });
+  const [voteState, setVoteState] = useState<VoteState>("hidden");
+  const [remainingMs, setRemainingMs] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
+  const [voterId, setVoterId] = useState("");
+
+  useEffect(() => {
+    let id = localStorage.getItem("roulette_voter_id");
+    if (!id) {
+      id = generateVoterId();
+      localStorage.setItem("roulette_voter_id", id);
+    }
+    setVoterId(id);
+  }, []);
+
+  const fetchRoulette = useCallback(async () => {
+    try {
+      const res = await fetch("/api/roulette");
+      const data: RouletteData = await res.json();
+      setRoulette(data);
+
+      if (!data.active) {
+        setVoteState("hidden");
+        return;
+      }
+
+      const storedSession = localStorage.getItem("roulette_session_id");
+      const storedTime = localStorage.getItem("roulette_vote_time");
+
+      if (storedSession === data.sessionId && storedTime) {
+        const elapsed = Date.now() - parseInt(storedTime, 10);
+        if (elapsed < COOLDOWN_MS) {
+          setRemainingMs(COOLDOWN_MS - elapsed);
+          setVoteState("voted");
+          return;
+        }
+      }
+
+      setVoteState((prev) => prev === "voted" ? "cooldown-expired" : "ready");
+    } catch {
+      // ignore
+    }
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -43,6 +114,58 @@ export default function DonatePage() {
     const interval = setInterval(fetchData, 10000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!voterId) return;
+    fetchRoulette();
+    const interval = setInterval(fetchRoulette, 3000);
+    return () => clearInterval(interval);
+  }, [fetchRoulette, voterId]);
+
+  // Countdown tick
+  useEffect(() => {
+    if (voteState !== "voted") return;
+    const interval = setInterval(() => {
+      setRemainingMs((prev) => {
+        if (prev <= 1000) {
+          clearInterval(interval);
+          setVoteState("cooldown-expired");
+          return 0;
+        }
+        return prev - 1000;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [voteState]);
+
+  const castVote = async (choice: "red" | "black") => {
+    if (submitting || !voterId) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/roulette", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voterId, choice }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRoulette((prev) => ({ ...prev, redVotes: data.redVotes, blackVotes: data.blackVotes }));
+        localStorage.setItem("roulette_vote_time", String(Date.now()));
+        localStorage.setItem("roulette_session_id", data.sessionId);
+        setRemainingMs(COOLDOWN_MS);
+        setVoteState("voted");
+      } else if (data.reason === "cooldown") {
+        setRemainingMs(data.remainingMs);
+        setVoteState("voted");
+      } else if (data.reason === "closed") {
+        setVoteState("hidden");
+      }
+    } catch {
+      // ignore
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const total = donations.reduce((sum, d) => sum + d.amount, 0);
   const progress = goal.active && goal.target > 0 ? Math.min((total / goal.target) * 100, 100) : 0;
@@ -93,7 +216,7 @@ export default function DonatePage() {
         {/* Header */}
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 4 }}>
-            Support the Stream
+            Support JimpyJack&apos;s Stream
           </h1>
           <p style={{ opacity: 0.6, fontSize: 14 }}>
             Donations appear live on stream!
@@ -251,6 +374,108 @@ export default function DonatePage() {
           <span style={{ fontSize: 13, opacity: 0.7 }}>Zelle: </span>
           <span style={{ fontWeight: 700, color: "#b78aff" }}>(949) 290-0196</span>
         </div>
+
+        {/* Roulette voting — only shown when active */}
+        {voteState !== "hidden" && (() => {
+          const total = roulette.redVotes + roulette.blackVotes;
+          const redPct = total > 0 ? (roulette.redVotes / total) * 100 : 50;
+          const blackPct = total > 0 ? (roulette.blackVotes / total) * 100 : 50;
+          return (
+            <div
+              style={{
+                marginBottom: 24,
+                background: "rgba(255,255,255,0.05)",
+                borderRadius: 16,
+                padding: 20,
+                border: "1px solid rgba(255,255,255,0.1)",
+              }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 14, opacity: 0.7, textAlign: "center", letterSpacing: 1, textTransform: "uppercase" }}>
+                🎡 Roulette Vote
+              </div>
+
+              {(voteState === "ready" || voteState === "cooldown-expired") && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {voteState === "cooldown-expired" && (
+                    <p style={{ fontSize: 12, opacity: 0.5, textAlign: "center", marginBottom: 2 }}>
+                      Cooldown over — vote again!
+                    </p>
+                  )}
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button
+                      onClick={() => castVote("red")}
+                      disabled={submitting}
+                      style={{
+                        flex: 1,
+                        padding: "18px 0",
+                        borderRadius: 14,
+                        border: "none",
+                        background: "#dc2626",
+                        color: "#fff",
+                        fontSize: 20,
+                        fontWeight: 900,
+                        fontFamily: "inherit",
+                        cursor: submitting ? "not-allowed" : "pointer",
+                        opacity: submitting ? 0.6 : 1,
+                        boxShadow: "0 4px 16px rgba(220,38,38,0.35)",
+                      }}
+                    >
+                      🔴 RED
+                    </button>
+                    <button
+                      onClick={() => castVote("black")}
+                      disabled={submitting}
+                      style={{
+                        flex: 1,
+                        padding: "18px 0",
+                        borderRadius: 14,
+                        border: "1px solid #444",
+                        background: "#1c1c1c",
+                        color: "#fff",
+                        fontSize: 20,
+                        fontWeight: 900,
+                        fontFamily: "inherit",
+                        cursor: submitting ? "not-allowed" : "pointer",
+                        opacity: submitting ? 0.6 : 1,
+                      }}
+                    >
+                      ⚫ BLACK
+                    </button>
+                  </div>
+                  <p style={{ fontSize: 11, opacity: 0.3, textAlign: "center" }}>
+                    Once per 10 minutes
+                  </p>
+                </div>
+              )}
+
+              {voteState === "voted" && (
+                <div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                    <div style={{ textAlign: "center", background: "rgba(220,38,38,0.12)", borderRadius: 10, padding: "12px 8px", border: "1px solid rgba(220,38,38,0.2)" }}>
+                      <div style={{ fontSize: 11, opacity: 0.6 }}>🔴 Red</div>
+                      <div style={{ fontSize: 28, fontWeight: 900, color: "#ef4444" }}>{roulette.redVotes}</div>
+                      <div style={{ fontSize: 11, opacity: 0.5 }}>{redPct.toFixed(0)}%</div>
+                    </div>
+                    <div style={{ textAlign: "center", background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "12px 8px", border: "1px solid #333" }}>
+                      <div style={{ fontSize: 11, opacity: 0.6 }}>⚫ Black</div>
+                      <div style={{ fontSize: 28, fontWeight: 900, color: "#aaa" }}>{roulette.blackVotes}</div>
+                      <div style={{ fontSize: 11, opacity: 0.5 }}>{blackPct.toFixed(0)}%</div>
+                    </div>
+                  </div>
+                  <div style={{ height: 10, borderRadius: 9999, overflow: "hidden", display: "flex", marginBottom: 10 }}>
+                    <div style={{ width: `${redPct}%`, background: "#dc2626", transition: "width 0.5s ease" }} />
+                    <div style={{ width: `${blackPct}%`, background: "#444", transition: "width 0.5s ease" }} />
+                  </div>
+                  {remainingMs > 0 && (
+                    <p style={{ fontSize: 12, opacity: 0.4, textAlign: "center" }}>
+                      Vote again in <span style={{ color: "#facc15", fontWeight: 700 }}>{formatCountdown(remainingMs)}</span>
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Leaderboard tabs */}
         <div

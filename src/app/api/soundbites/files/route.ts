@@ -85,7 +85,7 @@ export async function POST(request: Request) {
     writeFileSync(filePath, buffer);
 
     // Auto-create config for new file
-    const soundbites = getSoundbites();
+    const soundbites = await getSoundbites();
     const labelWithoutExt = finalFilename.replace(/\.mp3$/i, "");
     soundbites.configs.push({
       filename: finalFilename,
@@ -93,7 +93,7 @@ export async function POST(request: Request) {
       enabled: true,
       volume: 1.0,
     });
-    setSoundbites(soundbites);
+    await setSoundbites(soundbites);
 
     return NextResponse.json({
       success: true,
@@ -143,9 +143,9 @@ export async function DELETE(request: Request) {
     unlinkSync(filePath);
 
     // Remove from configs
-    const soundbites = getSoundbites();
+    const soundbites = await getSoundbites();
     soundbites.configs = soundbites.configs.filter((c) => c.filename !== filename);
-    setSoundbites(soundbites);
+    await setSoundbites(soundbites);
 
     return NextResponse.json({
       success: true,

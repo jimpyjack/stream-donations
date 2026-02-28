@@ -1,8 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
-import { join } from "path";
-
-const DATA_DIR = join(process.cwd(), "data");
-const DATA_FILE = join(DATA_DIR, "donations.json");
+import { neon } from "@neondatabase/serverless";
 
 export interface Donation {
   id: string;
@@ -37,161 +33,174 @@ export interface AudioSettings {
 }
 
 export interface SoundbiteConfig {
-  filename: string;      // MP3 filename (e.g., "airhorn.mp3")
-  label: string;         // Custom display name (e.g., "Airhorn 🎺")
-  enabled: boolean;      // Whether this soundbite is active
-  volume: number;        // Individual volume (0.0 to 1.0)
+  filename: string;
+  label: string;
+  enabled: boolean;
+  volume: number;
 }
 
 export interface SoundbiteTrigger {
-  id: string;           // Unique trigger ID (timestamp-based)
-  filename: string;     // Which sound to play
-  timestamp: number;    // When it was triggered
-  volume: number;       // Volume to play at (0.0 to 1.0)
+  id: string;
+  filename: string;
+  timestamp: number;
+  volume: number;
 }
 
 export interface SoundbitesState {
-  configs: SoundbiteConfig[];           // All soundbite configurations
-  pendingTrigger: SoundbiteTrigger | null;  // Currently queued sound to play
+  configs: SoundbiteConfig[];
+  pendingTrigger: SoundbiteTrigger | null;
 }
 
-interface StoreData {
-  donations: Donation[];
-  goal: Goal;
-  theme: Theme;
-  audio: AudioSettings;
-  movieCount: number;
-  soundbites: SoundbitesState;
+export interface RouletteState {
+  active: boolean;
+  redVotes: number;
+  blackVotes: number;
+  sessionId: string;
+  voterTimestamps: Record<string, number>;
 }
 
-const DEFAULT_DATA: StoreData = {
-  donations: [],
-  goal: { label: "", target: 0, active: false },
-  theme: {
-    preset: "neon",
-    barColor: "#00ff88",
-    barBgColor: "#1a1a2e",
-    textColor: "#ffffff",
-    accentColor: "#ff6b6b",
-    fontFamily: "Inter",
-    alertStyle: "slide-up",
-    barStyle: "rounded",
-  },
-  audio: {
-    enabled: true,
-    volume: 0.7,
-    soundFile: "donation-chime.mp3",
-  },
-  movieCount: 0,
-  soundbites: {
-    configs: [],
-    pendingTrigger: null,
-  },
+const DEFAULT_GOAL: Goal = { label: "", target: 0, active: false };
+const DEFAULT_THEME: Theme = {
+  preset: "neon",
+  barColor: "#00ff88",
+  barBgColor: "#1a1a2e",
+  textColor: "#ffffff",
+  accentColor: "#ff6b6b",
+  fontFamily: "Inter",
+  alertStyle: "slide-up",
+  barStyle: "rounded",
+};
+const DEFAULT_AUDIO: AudioSettings = {
+  enabled: true,
+  volume: 0.7,
+  soundFile: "donation-chime.mp3",
+};
+const DEFAULT_SOUNDBITES: SoundbitesState = {
+  configs: [],
+  pendingTrigger: null,
+};
+const DEFAULT_ROULETTE: RouletteState = {
+  active: false,
+  redVotes: 0,
+  blackVotes: 0,
+  sessionId: "",
+  voterTimestamps: {},
 };
 
-function readData(): StoreData {
-  if (!existsSync(DATA_DIR)) {
-    mkdirSync(DATA_DIR, { recursive: true });
+function sql() {
+  return neon(process.env.DATABASE_URL!);
+}
+
+async function getSetting<T>(key: string, fallback: T): Promise<T> {
+  const db = sql();
+  const rows = await db`SELECT value FROM settings WHERE key = ${key}`;
+  if (rows.length === 0) return fallback;
+  return rows[0].value as T;
+}
+
+async function setSetting<T>(key: string, value: T): Promise<void> {
+  const db = sql();
+  await db`
+    INSERT INTO settings (key, value)
+    VALUES (${key}, ${JSON.stringify(value)})
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+  `;
+}
+
+export async function getDonations(): Promise<Donation[]> {
+  const db = sql();
+  const rows = await db`SELECT * FROM donations ORDER BY timestamp DESC`;
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    amount: Number(r.amount),
+    message: r.message ?? "",
+    source: r.source as "venmo" | "zelle",
+    timestamp: r.timestamp,
+  }));
+}
+
+export async function addDonation(donation: Donation): Promise<boolean> {
+  const db = sql();
+  try {
+    await db`
+      INSERT INTO donations (id, name, amount, message, source, timestamp)
+      VALUES (${donation.id}, ${donation.name}, ${donation.amount}, ${donation.message}, ${donation.source}, ${donation.timestamp})
+    `;
+    return true;
+  } catch {
+    // Duplicate primary key = already exists
+    return false;
   }
-  if (!existsSync(DATA_FILE)) {
-    writeFileSync(DATA_FILE, JSON.stringify(DEFAULT_DATA, null, 2));
-    return structuredClone(DEFAULT_DATA);
-  }
-  const raw = readFileSync(DATA_FILE, "utf-8");
-  return JSON.parse(raw);
 }
 
-function writeData(data: StoreData) {
-  if (!existsSync(DATA_DIR)) {
-    mkdirSync(DATA_DIR, { recursive: true });
-  }
-  writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+export async function getDonationIds(): Promise<Set<string>> {
+  const db = sql();
+  const rows = await db`SELECT id FROM donations`;
+  return new Set(rows.map((r) => r.id as string));
 }
 
-export function getDonations(): Donation[] {
-  return readData().donations;
+export async function clearDonations(): Promise<void> {
+  const db = sql();
+  await db`DELETE FROM donations`;
 }
 
-export function addDonation(donation: Donation): boolean {
-  const data = readData();
-  if (data.donations.some((d) => d.id === donation.id)) {
-    return false; // already exists
-  }
-  data.donations.push(donation);
-  writeData(data);
-  return true;
+export async function getGoal(): Promise<Goal> {
+  return getSetting("goal", DEFAULT_GOAL);
 }
 
-export function getGoal(): Goal {
-  return readData().goal;
+export async function setGoal(goal: Goal): Promise<void> {
+  return setSetting("goal", goal);
 }
 
-export function setGoal(goal: Goal) {
-  const data = readData();
-  data.goal = goal;
-  writeData(data);
+export async function getTheme(): Promise<Theme> {
+  return getSetting("theme", DEFAULT_THEME);
 }
 
-export function clearDonations() {
-  const data = readData();
-  data.donations = [];
-  writeData(data);
+export async function setTheme(theme: Theme): Promise<void> {
+  return setSetting("theme", theme);
 }
 
-export function getTheme(): Theme {
-  return readData().theme;
+export async function getAudioSettings(): Promise<AudioSettings> {
+  return getSetting("audio", DEFAULT_AUDIO);
 }
 
-export function setTheme(theme: Theme) {
-  const data = readData();
-  data.theme = theme;
-  writeData(data);
+export async function setAudioSettings(audio: AudioSettings): Promise<void> {
+  return setSetting("audio", audio);
 }
 
-export function getDonationIds(): Set<string> {
-  return new Set(readData().donations.map((d) => d.id));
+export async function getMovieCount(): Promise<number> {
+  return getSetting("movieCount", 0);
 }
 
-export function getAudioSettings(): AudioSettings {
-  return readData().audio;
+export async function setMovieCount(count: number): Promise<void> {
+  return setSetting("movieCount", count);
 }
 
-export function setAudioSettings(audio: AudioSettings) {
-  const data = readData();
-  data.audio = audio;
-  writeData(data);
+export async function getSoundbites(): Promise<SoundbitesState> {
+  return getSetting("soundbites", DEFAULT_SOUNDBITES);
 }
 
-export function getMovieCount(): number {
-  return readData().movieCount ?? 0;
+export async function setSoundbites(soundbites: SoundbitesState): Promise<void> {
+  return setSetting("soundbites", soundbites);
 }
 
-export function setMovieCount(count: number) {
-  const data = readData();
-  data.movieCount = count;
-  writeData(data);
+export async function getRoulette(): Promise<RouletteState> {
+  return getSetting("roulette", DEFAULT_ROULETTE);
 }
 
-export function getSoundbites(): SoundbitesState {
-  const data = readData();
-  return data.soundbites ?? { configs: [], pendingTrigger: null };
+export async function setRoulette(roulette: RouletteState): Promise<void> {
+  return setSetting("roulette", roulette);
 }
 
-export function setSoundbites(soundbites: SoundbitesState) {
-  const data = readData();
-  data.soundbites = soundbites;
-  writeData(data);
-}
-
-export function triggerSoundbite(filename: string, volume: number) {
-  const data = readData();
+export async function triggerSoundbite(filename: string, volume: number): Promise<void> {
+  const soundbites = await getSoundbites();
   const trigger: SoundbiteTrigger = {
     id: `${Date.now()}-${Math.random()}`,
     filename,
     timestamp: Date.now(),
     volume,
   };
-  data.soundbites = data.soundbites ?? { configs: [], pendingTrigger: null };
-  data.soundbites.pendingTrigger = trigger;
-  writeData(data);
+  soundbites.pendingTrigger = trigger;
+  await setSoundbites(soundbites);
 }

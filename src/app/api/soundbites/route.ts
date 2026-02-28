@@ -4,7 +4,7 @@ import { getSoundbites, setSoundbites, type SoundbitesState } from "@/lib/store"
 // GET - Return current soundbites state
 export async function GET() {
   try {
-    const soundbites = getSoundbites();
+    const soundbites = await getSoundbites();
     return NextResponse.json(soundbites);
   } catch (error) {
     console.error("Error getting soundbites:", error);
@@ -19,7 +19,7 @@ export async function GET() {
 export async function PUT(request: Request) {
   try {
     const updates: SoundbitesState = await request.json();
-    setSoundbites(updates);
+    await setSoundbites(updates);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Error updating soundbites:", error);

@@ -4,7 +4,7 @@ import { getAudioSettings, setAudioSettings, type AudioSettings } from "@/lib/st
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return NextResponse.json(getAudioSettings());
+  return NextResponse.json(await getAudioSettings());
 }
 
 export async function PUT(request: Request) {
@@ -14,6 +14,6 @@ export async function PUT(request: Request) {
     volume: Number(body.volume ?? 0.7),
     soundFile: String(body.soundFile || "donation-chime.mp3"),
   };
-  setAudioSettings(audio);
+  await setAudioSettings(audio);
   return NextResponse.json(audio);
 }

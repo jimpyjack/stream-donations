@@ -13,6 +13,6 @@ export async function POST() {
     source: "venmo" as const,
     timestamp: new Date().toISOString(),
   };
-  addDonation(donation);
+  await addDonation(donation);
   return NextResponse.json(donation);
 }
